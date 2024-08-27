@@ -1,0 +1,302 @@
+---
+title: "Data Blog - Rental Debt"
+output: html_document
+date: "2024-08-20"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+
+library(zipcodeR)
+library(tidyverse)
+library(maps)
+library(viridis)
+library(ggthemes)
+library(albersusa)
+library(extrafont)
+library(formattable)
+loadfonts(device = "win")
+
+```
+
+```{r load and clean data}
+
+rental_debt_cfpb <- read_csv("complaints-2024-08-19_21_02_Rental Debt.csv")
+debt_collections_cfpb <- read_csv("complaints-2024-08-19_21_18_all debt collection.csv")
+rental_debt_stats <- read_csv("Rental_Debt_Stats.csv")
+
+rental_debt_cfpb$`Date received` <- as.Date(rental_debt_cfpb$`Date received`, "%m/%d/%y")
+
+rental_debt_cfpb <- rental_debt_cfpb %>%
+  filter(`Date received` < "2024-08-01")
+
+# get rid of invalid zipcode data for mapping
+rental_debt_cfpb$`ZIP code` <- str_replace(rental_debt_cfpb$`ZIP code`, "XX", "00")
+rental_debt_cfpb$`ZIP code`<- str_replace(rental_debt_cfpb$`ZIP code`, "X", "0")
+rental_debt_cfpb$`ZIP code` <- as.numeric(as.character(rental_debt_cfpb$`ZIP code`))
+
+rental_debt_cfpb_4_dig <- rental_debt_cfpb %>%
+  filter(!is.na(rental_debt_cfpb$`ZIP code`)) %>%
+  filter(`ZIP code` < 10000)
+
+rental_debt_cfpb_4_dig$`ZIP code` <- paste0("0", rental_debt_cfpb_4_dig$`ZIP code`)
+
+rental_debt_cfpb_5_dig <- rental_debt_cfpb %>%
+  filter(!is.na(rental_debt_cfpb$`ZIP code`)) %>%
+  filter(`ZIP code` >= 10000)
+
+rental_debt_cfpb_5_dig$`ZIP code` <- as.character(rental_debt_cfpb_5_dig$`ZIP code`)
+
+rental_debt_cfpb_clean <- rbind(rental_debt_cfpb_4_dig, rental_debt_cfpb_5_dig) %>%
+  rename("zipcode" = "ZIP code")
+
+rental_debt_stats$`Household Income` <- str_replace(rental_debt_stats$`Household Income`, " \x96 ", " - ")
+
+```
+
+
+```{r zipcode map}
+
+zip_geocoded_full <- as.data.frame(reverse_zipcode(rental_debt_cfpb_clean$zipcode))
+
+zip_geocoded <- zip_geocoded_full %>%
+  select(zipcode, county, state, major_city, lat, lng)
+
+rental_debt_cfpb_joined_zip <- left_join(rental_debt_cfpb_clean, zip_geocoded, by = "zipcode")
+
+rental_debt_cfpb_map <- rental_debt_cfpb_joined_zip %>%
+  group_by(zipcode, lat, lng) %>%
+  tally()
+
+us <- map_data("state")
+
+ggplot(rental_debt_cfpb_map, aes(lng, lat)) +
+  geom_polygon(data = us, aes(x = long, y = lat, group = group), color = "black", fill = "#F5F5F5", alpha = .35) +
+  geom_point(size = 2, alpha = 0.1, color = "#20aa3f") +
+  geom_label(aes(x = -71, y = 32), label = "Most consumer complaints\nabout rental debt collection are\nfiled in metropolitan areas", family = "Georgia", size = 3, fill = "#addc91") +
+  geom_label(aes(x = -104, y = 29), label = "Texas:\n1,064 Complaints", family = "Georgia", size = 3, fill = "#addc91") +
+  geom_label(aes(x = -87, y = 27.5), label = "Florida:\n675 Complaints", family = "Georgia", size = 3, fill = "#addc91") +
+  geom_label(aes(x = -78.5, y = 45.5), label = "New York:\n158 Complaints", family = "Georgia", size = 3, fill = "#addc91") +
+  geom_label(aes(x = -122, y = 32), label = "California:\n502 Complaints", family = "Georgia", size = 3, fill = "#addc91") +
+  xlim(-125, -65) + ylim(25, 50) +
+  ggtitle("\nRental Debt Collection Complaints: Mapped") +
+  labs(subtitle = "August 2023 - July 2024",
+       caption = "Source: Consumer Financial Protection Bureau | github: julia-tache     \n") +
+  theme_void() +
+  theme(plot.background = element_rect(color = "#F5F5F5", fill = "#F5F5F5"),
+        panel.background = element_rect(color = "#F5F5F5", fill = "#F5F5F5"),
+        plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+        plot.subtitle = element_text(face = "italic", size = 14, hjust = 0.5),
+        strip.text = element_text(face = "bold"),
+        text = element_text(family = "Georgia"))
+
+ggsave("map_rental_debt.png", height = 5, width = 7)
+
+```
+
+```{r}
+
+rental_debt_cfpb$`Date received` <- format(as.Date(rental_debt_cfpb$`Date received`), "%Y-%m")
+rental_debt_cfpb$`Date received` <- as.Date(paste(rental_debt_cfpb$`Date received`, "-01", sep=""))
+
+rental_debt_cfpb %>%
+  group_by(`Date received`) %>%
+  tally() %>%
+  ggplot(aes(x = `Date received`, y =  n)) +
+  geom_line(group = 1, color = "#addc91") +
+  geom_point(color = "#20aa3f") +
+  geom_text(aes(label = n), color = "#20aa3f", vjust = -1, fontface = "bold", family = "Georgia", size = 5) +
+  ylim(0, 800) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  ggtitle("\nNumber of Consumer Complaints Related to Rental Debt") +
+  labs(subtitle = "The volume of rental debt complaints grew steadily until May of 2024",
+       caption = "Source: Consumer Financial Protection Bureau | github: julia-tache") +
+  xlab("Date Received") +
+  theme(plot.background = element_rect(fill = "#F5F5F5", color = NA),
+        plot.margin = margin(0.25, 0.25, 0.25, 0.6, "cm"),
+        panel.background = element_rect(fill = "#F5F5F5", color = NA),
+        panel.grid.major = element_line(color = "light gray"),
+        panel.grid.minor = element_line(color = "light gray"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 12, face = "italic", hjust = 0.5),
+        plot.caption = element_text(size = 10, face = "italic", hjust = 0.5),
+        axis.title.x = element_text(face = "bold", size = 12),
+        axis.text.x = element_text(size = 8),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 12, color = "black", hjust = 1),
+        axis.ticks = element_blank(),
+        legend.position = "none",
+        text = element_text(family = "Georgia", size = 13))
+
+ggsave("n_complaints.png", height = 5, width = 8)
+
+```
+
+
+```{r top companies - rental debt}
+
+rental_debt_cfpb_companies <- rental_debt_cfpb %>%
+  group_by(Company) %>%
+  tally() %>%
+  arrange(desc(n))
+
+rental_debt_cfpb_companies_top10 <- rental_debt_cfpb_companies[0:10, ]
+
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, ",Inc.", "")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, ", Inc.", "")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, ", Inc", "")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, " Inc.", "")
+rental_debt_cfpb_companies_top10$Company<- str_replace(rental_debt_cfpb_companies_top10$Company, ", INC.", "")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, ", INC.", "")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, " A/KA Columbia Debt Recovery, LLC d/b/a Genesis", "")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, "TRANSUNION INTERMEDIATE HOLDINGS", "TransUnion Intermediate Holdings")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, "FAIR COLLECTIONS & OUTSOURCING", "Fair Collections & Outsourcing")
+rental_debt_cfpb_companies_top10$Company <- str_replace(rental_debt_cfpb_companies_top10$Company, "EQUIFAX", "Equifax")
+
+rental_debt_cfpb_companies_top10 %>%
+  ggplot(aes(x = reorder(Company, n), y =  n, fill = "#20aa3f")) +
+  geom_bar(position = "dodge", stat = "identity", color = "#20aa3f", width = 0.75) +
+  geom_text(aes(label = prettyNum(n, big.mark = ",")), color = "#addc91", hjust = 1.2, fontface = "bold", family = "Georgia", size = 4) +
+  scale_fill_manual(values = "#20aa3f") +
+  coord_flip() +
+  ggtitle("\nDebt Collection Companies with Highest Amount\nof Consumer Complaints Related to Rental Debt") +
+  labs(subtitle = "August 2023 - July 2024",
+       caption = "Source: Consumer Financial Protection Bureau | github: julia-tache") +
+  ylab("Number of Complaints") +
+  theme(plot.background = element_rect(fill = "#F5F5F5", color = NA),
+        plot.margin = margin(0.25, 0.25, 0.25, 0.6, "cm"),
+        panel.background = element_rect(fill = "#F5F5F5", color = NA),
+        panel.grid.major = element_line(color = "light gray"),
+        panel.grid.minor = element_line(color = "light gray"),
+        plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 12, face = "italic", hjust = 0.5),
+        plot.caption = element_text(size = 10, face = "italic", hjust = 0.5),
+        axis.title.x = element_text(face = "bold", size = 12),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, color = "black", hjust = 1),
+        axis.ticks = element_blank(),
+        legend.position = "none",
+        text = element_text(family = "Georgia", size = 13))
+
+ggsave("n_companies.png", height = 5, width = 8)
+
+```
+
+
+```{r top issues - facet}
+
+rental_debt_cfpb_issue_top <- rental_debt_cfpb %>%
+  group_by(Issue) %>%
+  summarise(Percentage = n() / nrow(rental_debt_cfpb)) %>%
+  arrange(desc(Percentage))
+
+debt_collections_cfpb <- debt_collections_cfpb %>%
+  filter(!is.na(`Date received`))
+
+debt_collections_cfpb$`Date received` <- as.Date(debt_collections_cfpb$`Date received`, "%m/%d/%y")
+
+debt_collections_cfpb_2023 <- debt_collections_cfpb %>%
+  filter(`Date received` > "2023-07-31")
+
+debt_collections_cfpb_issue_top <- debt_collections_cfpb_2023 %>%
+  group_by(Issue) %>%
+  summarise(Percentage = n() / nrow(debt_collections_cfpb_2023)) %>%
+  arrange(desc(Percentage))
+
+Type_Issue <- c(rep("Rental Debt (n = 6,043)", 7), rep("Any Debt (n = 107,302)", 7))
+
+issue_graph <- rbind(rental_debt_cfpb_issue_top, debt_collections_cfpb_issue_top)
+issue_graph <- cbind(issue_graph, Type_Issue)
+
+issue_graph$Issue <- str_replace(issue_graph$Issue, "Threatened to contact someone or share information improperly", "Threatened to contact someone\nor share information improperly")
+issue_graph$Issue <- str_replace(issue_graph$Issue, "Took or threatened to take negative or legal action", "Took or threatened to take\nnegative or legal action")
+
+issue_graph$Labels <- paste0(round(issue_graph$Percentage * 100), "%")
+
+issue_graph %>%
+  ggplot(aes(x = reorder(Issue, Percentage), y =  Percentage, fill = "#20aa3f")) +
+  geom_bar(position = "dodge", stat = "identity", color = "#20aa3f", width = 0.75) +
+  geom_label(aes(label = Labels), fill = "#addc91", family = "Georgia", size = 3, label.r = unit(0, "pt")) +
+  facet_wrap(~Type_Issue) +
+  scale_fill_manual(values = "#20aa3f") +
+  coord_flip() +
+  ylim(0, 0.6) +
+  ggtitle("\nTop Debt Collection Issues Reported\n(Aug 2023 - Jul 2024)") +
+  labs(subtitle = "Out of 6,043 complaints about rental debt collection filed in the past year,\nhalf were related to attempts to collect debts not owed. Those with complaints\nrelated to rental debt were twice as likely to report false statements or\nmisrepresentations compared to all debt collection complaint filers.\n",
+       caption = "Source: Consumer Financial Protection Bureau | github: julia-tache") +
+  theme(plot.background = element_rect(fill = "#F5F5F5", color = NA),
+        plot.margin = margin(0.25, 0.25, 0.25, 0.6, "cm"),
+        panel.background = element_rect(fill = "#F5F5F5", color = NA),
+        panel.grid = element_blank(),
+        strip.background = element_rect(fill = "#addc91"),
+        strip.text = element_text(face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 10, face = "italic", hjust = 0.5),
+        plot.caption = element_text(size = 10, face = "italic"),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 10, color = "black", hjust = 1),
+        axis.ticks = element_blank(),
+        legend.position = "none",
+        text = element_text(family = "Georgia", size = 13))
+
+ggsave("n_issues.png", height = 5, width = 8)
+
+```
+
+
+```{r subissues - rental}
+
+rental_debt_cfpb_subissue <- rental_debt_cfpb %>%
+  group_by(`Sub-issue`) %>%
+  tally() %>%
+  arrange(desc(n))
+
+rental_debt_cfpb_subissue_top10 <- rental_debt_cfpb_subissue[0:10, ]
+
+rental_debt_cfpb_subissue_top10  %>%
+  ggplot(aes(x = reorder(`Sub-issue`, n), y =  n)) +
+  geom_bar(position = "dodge", stat = "identity", fill = "#20aa3f", color = "#20aa3f") +
+  geom_label(aes(label =  `Sub-issue`), color = "#20aa3f", fill = "#addc91", hjust = -0.02, family = "Georgia", fontface = "bold", label.r = unit(0, "pt"), size = 4) +
+  geom_text(aes(label = prettyNum(n, big.mark = ",")), hjust = 1.1, family = "Georgia", color = "#aadc91", fontface = "bold", size = 4) +
+  coord_flip() +
+  ylim(0, 2100) +
+  ggtitle("\nNumber of Rental Debt Collection Complaints by Sub-Issue") +
+  labs(subtitle = "Complaints filed to the CFPB concerning rental debt collection reveal a trend of companies\nwrongfully going after consumers for debts that they do not owe or are incorrect in value.",
+       caption = "Source: Consumer Financial Protection Bureau (CFPB) | github: julia-tache") +
+  ylab("Number of Complaints") +
+  theme(plot.background = element_rect(fill = "#F5F5F5", color = NA),
+        plot.margin = margin(0.25, 0.25, 0.25, 0.6, "cm"),
+        panel.background = element_rect(fill = "#F5F5F5", color = NA),
+        panel.grid = element_blank(),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 12, face = "italic", hjust = 0.5),
+        plot.caption = element_text(size = 10, face = "italic", hjust = 0.5),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none",
+        text = element_text(family = "Georgia", size = 13))
+
+ggsave("n_subissues.png", height = 5, width = 8)
+
+```
+
+```{r}
+
+rental_debt_stats$`Households Behind on Rent (%)` <- round(rental_debt_stats$`Households Behind on Rent (%)` * 100, digits = 1)
+rental_debt_stats$`(%)` <- round(rental_debt_stats$`(%)` * 100, digits = 1)
+
+rental_debt_stats$Race[is.na(rental_debt_stats$Race)] <- " "
+rental_debt_stats$`(%)`[is.na(rental_debt_stats$`(%)`)] <- " "
+colnames(rental_debt_stats)[2] <- "Households<br>Behind on Rent (%)"
+
+formattable(rental_debt_stats, list(
+  `Households<br>Behind on Rent (%)` = color_tile("transparent", "#20aa3f"),
+  `(%)` = color_tile("transparent", "#20aa3f")))
+
+```
